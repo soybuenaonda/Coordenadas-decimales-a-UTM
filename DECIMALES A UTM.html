@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Procesador de Coordenadas: Decimal a UTM</title>
+    <!-- Librería Proj4js para máxima precisión geoespacial -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f9;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 1000px;
+            background-color: #fff;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h2 {
+            margin-top: 0;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .input-group {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-family: monospace;
+            resize: vertical;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .btn-copy {
+            background-color: #27ae60;
+        }
+        .btn-copy:hover {
+            background-color: #219653;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: center;
+        }
+        th {
+            background-color: #34495e;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .error {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Procesador Analítico de Coordenadas (WGS 84 a UTM)</h2>
+    
+    <p>Ingrese las coordenadas en grados decimales. El sistema procesará datos separados por comas, espacios o tabulaciones. Asegúrese de utilizar el <strong>punto</strong> como separador decimal.</p>
+    
+    <div class="input-group">
+        <textarea id="inputCoords" placeholder="Ejemplos de entrada válida:&#10;7.81437 -72.44159&#10;7.81437, -72.44159&#10;7.814375	-72.441591"></textarea>
+    </div>
+
+    <div class="controls">
+        <button onclick="procesarCoordenadas()">Ejecutar Conversión</button>
+        <button class="btn-copy" onclick="copiarParaExcel()">Copiar Tabla para Excel</button>
+    </div>
+
+    <table id="resultsTable">
+        <thead>
+            <tr>
+                <th>Latitud Original</th>
+                <th>Longitud Original</th>
+                <th>Coordenada X (Este)</th>
+                <th>Coordenada Y (Norte)</th>
+                <th>Zona UTM</th>
+                <th>Estado</th>
+            </tr>
+        </thead>
+        <tbody id="tableBody">
+            <!-- Los resultados se inyectarán aquí -->
+        </tbody>
+    </table>
+</div>
+
+<script>
+    // Matriz global para almacenar los datos procesados listos para portapapeles
+    let datosPortapapeles = [];
+
+    function procesarCoordenadas() {
+        const input = document.getElementById('inputCoords').value;
+        const lineas = input.trim().split('\n');
+        const tbody = document.getElementById('tableBody');
+        tbody.innerHTML = '';
+        datosPortapapeles = [];
+
+        // Encabezados para la exportación a Excel (separados por tabulaciones)
+        datosPortapapeles.push(['Latitud', 'Longitud', 'X (Este)', 'Y (Norte)', 'Zona UTM'].join('\t'));
+
+        // Expresión regular robusta para capturar decimales con punto.
+        // Soporta delimitadores múltiples: espacios, tabulaciones y/o comas.
+        const regex = /^\s*(-?\d+(?:\.\d+)?)(?:[\s,]+)(-?\d+(?:\.\d+)?)\s*$/;
+
+        lineas.forEach((linea, index) => {
+            if (linea.trim() === '') return; // Ignorar líneas vacías
+
+            const coincidencia = linea.match(regex);
+            const tr = document.createElement('tr');
+
+            if (coincidencia) {
+                // Extracción estandarizada: Se asume formato (Latitud, Longitud)
+                const lat = parseFloat(coincidencia[1]);
+                const lon = parseFloat(coincidencia[2]);
+
+                // Validación de límites geográficos
+                if (lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+                    
+                    // Cálculo dinámico de la zona UTM basado en la longitud
+                    const zona = Math.floor((lon + 180) / 6) + 1;
+                    const hemisferio = lat >= 0 ? 'N' : 'S';
+                    const definicionHemisferio = lat >= 0 ? '' : '+south ';
+                    
+                    // Cadena de proyección Proj4 para la zona específica
+                    const projUTM = `+proj=utm +zone=${zona} ${definicionHemisferio}+datum=WGS84 +units=m +no_defs`;
+                    
+                    // Conversión de EPSG:4326 (WGS 84) a UTM local
+                    const resultado = proj4('EPSG:4326', projUTM, [lon, lat]); // Proj4 requiere orden [Longitud, Latitud]
+                    
+                    const este = resultado[0].toFixed(6);
+                    const norte = resultado[1].toFixed(6);
+                    const designadorZona = `${zona}${hemisferio}`;
+
+                    // Formateo de las coordenadas originales a 6 decimales con punto
+                    const latFormat = lat.toFixed(6);
+                    const lonFormat = lon.toFixed(6);
+
+                    // Insertar en la tabla HTML
+                    tr.innerHTML = `
+                        <td>${latFormat}</td>
+                        <td>${lonFormat}</td>
+                        <td>${este}</td>
+                        <td>${norte}</td>
+                        <td>${designadorZona}</td>
+                        <td style="color: #27ae60; font-weight: bold;">Éxito</td>
+                    `;
+
+                    // Almacenar en la matriz para exportación estructurada
+                    datosPortapapeles.push([latFormat, lonFormat, este, norte, designadorZona].join('\t'));
+                } else {
+                    tr.innerHTML = `
+                        <td>${coincidencia[1]}</td>
+                        <td>${coincidencia[2]}</td>
+                        <td colspan="3" class="error">Fuera de límites geográficos</td>
+                        <td class="error">Error</td>
+                    `;
+                }
+            } else {
+                tr.innerHTML = `
+                    <td colspan="5" class="error">Formato inválido en la línea ${index + 1}: "${linea}"</td>
+                    <td class="error">Error de Sintaxis</td>
+                `;
+            }
+            tbody.appendChild(tr);
+        });
+    }
+
+    function copiarParaExcel() {
+        if (datosPortapapeles.length <= 1) {
+            alert('No hay datos procesados para copiar.');
+            return;
+        }
+
+        // Unir las filas con saltos de línea para el formato final
+        const textoCopiado = datosPortapapeles.join('\n');
+
+        navigator.clipboard.writeText(textoCopiado).then(() => {
+            alert('Datos estructurados copiados al portapapeles. Puede pegarlos directamente en Excel o su software de mapeo.');
+        }).catch(err => {
+            alert('Error al acceder al portapapeles: ' + err);
+        });
+    }
+</script>
+
+</body>
+</html>
